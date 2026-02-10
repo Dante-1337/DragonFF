@@ -11,18 +11,51 @@ from .ext_2dfx_menus import EXT2DFXObjectProps, EXT2DFXMenus
 from .map_ot import EXPORT_OT_ipl_cull
 from .cull_menus import CULLObjectProps, CULLMenus
 from ..gtaLib.data import presets
+from .col_menus import draw_col_preset_helper
+from .col_menus import COLMaterialEnumProps
 
-texture_filters_items = (
-    ("0", "Disabled", ""),
-    ("1", "Nearest", "Point sampled"),
-    ("2", "Linear", "Bilinear"),
-    ("3", "Mip Nearest", "Point sampled per pixel MipMap"),
-    ("4", "Mip Linear", "Bilinear per pixel MipMap"),
-    ("5", "Linear Mip Nearest", "MipMap interp point sampled"),
-    ("6", "Linear Mip Linear", "Trilinear")
+texture_raster_items = (
+    ("0", "Default", ""),
+    ("1", "8888",    ""),
+    ("2", "4444",    ""),
+    ("3", "1555",    ""),
+    ("4", "888",     ""),
+    ("5", "565",     ""),
+    ("6", "555",     ""),
+    ("7", "LUM",     "")
 )
 
-texture_uv_addressing_items = (
+texture_palette_items = (
+    ("0", "None", ""),
+    ("1", "PAL4", ""),
+    ("2", "PAL8", "")
+)
+
+texture_compression_items = (
+    ("0", "None", ""),
+    ("1", "DXT1", ""),
+    ("2", "DXT2", ""),
+    ("3", "DXT3", ""),
+    ("4", "DXT4", ""),
+    ("5", "DXT5", "")
+)
+
+texture_mipmap_items = (
+    ("0", "None", ""),
+    ("1", "Full", "")
+)
+
+texture_filter_items = (
+    ("0", "Disabled", ""),
+    ("1", "Nearest", ""),
+    ("2", "Linear", ""),
+    ("3", "Mip Nearest", ""),
+    ("4", "Mip Linear", ""),
+    ("5", "Linear Mip Nearest", ""),
+    ("6", "Linear Mip Linear", "")
+)
+
+texture_uvaddress_items = (
     ("0", "Disabled", ""),
     ("1", "Wrap", ""),
     ("2", "Mirror", ""),
@@ -45,6 +78,7 @@ texture_blend_items = (
     ("11", "Src Alpha Sat", "Source alpha saturated")
 )
 
+
 #######################################################
 def breakable_obj_poll_func(self, obj):
     return obj.dff.type == 'BRK'
@@ -53,15 +87,48 @@ def breakable_obj_poll_func(self, obj):
 class MATERIAL_PT_dffMaterials(bpy.types.Panel):
 
     bl_idname      = "MATERIAL_PT_dffMaterials"
-    bl_label       = "DragonFF - Export Material"
+    bl_label       = "DragonFF - Material Settings"
     bl_space_type  = "PROPERTIES"
     bl_region_type = "WINDOW"
     bl_context     = "material"
 
-    ambient     :  bpy.props.BoolProperty(
-        name        = "Export Material",
-        default     = False
-    )
+    ########################################################
+    def update_texture(self, context):
+        mat = context.material
+        if not mat or not mat.node_tree:
+            return
+
+        principled = next((n for n in mat.node_tree.nodes if n.type == 'BSDF_PRINCIPLED'), None)
+        if not principled:
+            return
+
+        image_node = None
+        for link in mat.node_tree.links:
+            if link.to_node == principled and link.to_socket.name == 'Base Color':
+                if link.from_node.type == 'TEX_IMAGE':
+                    image_node = link.from_node
+                    break
+
+        tex_name = mat.dff.tex_name
+
+        if tex_name:
+            image = bpy.data.images.get(tex_name)
+            if image:
+                if not image_node:
+                    image_node = mat.node_tree.nodes.new(type='ShaderNodeTexImage')
+                    mat.node_tree.links.new(image_node.outputs['Color'], principled.inputs['Base Color'])
+                    mat.node_tree.links.new(image_node.outputs['Alpha'], principled.inputs['Alpha'])
+
+                image_node.image = image
+                image_node.label = tex_name
+        else:
+            if image_node:
+
+                for link in list(mat.node_tree.links):
+                    if link.from_node == image_node:
+                        mat.node_tree.links.remove(link)
+
+                mat.node_tree.nodes.remove(image_node)
 
     #######################################################
     def draw_col_menu(self, context):
@@ -71,17 +138,29 @@ class MATERIAL_PT_dffMaterials(bpy.types.Panel):
         box = layout.box()
         box.label(text="Collision properties")
 
-        props = [
-            ["col_mat_index", "Material"],
-            ["col_flags", "Flags"],
-            ["col_brightness", "Brightness"],
-            ["col_day_light", "Day Light"],
-            ["col_night_light", "Night Light"],
-        ]
+        split = box.row().split(factor=0.4)
+        split.alignment = 'LEFT'
+        split.label(text="Material")
+        split.prop(settings, "col_mat_index", text="")
 
-        for prop in props:
-            self.draw_labelled_prop(box.row(), settings, [prop[0]], prop[1])
+        split = box.row().split(factor=0.4)
+        split.alignment = 'LEFT'
+        split.label(text="Flags")
+        split.prop(settings, "col_flags", text="")
 
+        split = box.row().split(factor=0.4)
+        split.alignment = 'LEFT'
+        split.label(text="Brightness")
+        split.prop(settings, "col_brightness", text="")
+
+        split = box.row().split(factor=0.4)
+        split.alignment = 'LEFT'
+        split.label(text="Light")
+        prop_row = split.row(align=True)
+        prop_row.prop(settings, "col_day_light", text="Day")
+        prop_row.prop(settings, "col_night_light", text="Night")
+
+        draw_col_preset_helper(layout, context)
 
     #######################################################
     def draw_labelled_prop(self, row, settings, props, label, text=""):
@@ -93,24 +172,30 @@ class MATERIAL_PT_dffMaterials(bpy.types.Panel):
     #######################################################
     def draw_texture_prop_box(self, context, box):
         settings = context.material.dff
-        box.label(text="Texture properties")
-        
+
+        split = box.row().split(factor=0.4)
+        split.alignment = 'LEFT'
+        split.label(text="Texture")
+
+        prop_row = split.row(align=True)
+        prop_row.prop_search(settings, "tex_name", bpy.data, "images", text="", icon='IMAGE_DATA')
+
         split = box.row().split(factor=0.4)
         split.alignment = 'LEFT'
         split.label(text="Filtering")
         split.prop(settings, "tex_filters", text="")
-        
+
         split = box.row().split(factor=0.4)
         split.alignment = 'LEFT'
         split.label(text="Addressing")
-        prop_row = split.row(align=True)
+
+        prop_row = split.row(align=True)  
         prop_row.prop(settings, "tex_u_addr", text="")
         prop_row.prop(settings, "tex_v_addr", text="")
 
     #######################################################
     def draw_material_prop_box(self, context, box):
         settings = context.material.dff
-        box.label(text="Material properties")
 
         # This is for conveniently setting the base colour from the settings
         # without removing the texture node
@@ -155,7 +240,7 @@ class MATERIAL_PT_dffMaterials(bpy.types.Panel):
             split = box.row().split(factor=0.4)
             split.alignment = 'LEFT'
             split.label(text="Texture")
-            split.prop(settings, "bump_map_tex", text="")
+            split.prop_search(settings, "bump_map_tex", bpy.data, "images", text="", icon='IMAGE_DATA')
             
             split = box.row().split(factor=0.4)
             split.alignment = 'LEFT'
@@ -174,7 +259,7 @@ class MATERIAL_PT_dffMaterials(bpy.types.Panel):
             split = box.row().split(factor=0.4)
             split.alignment = 'LEFT'
             split.label(text="Texture")
-            split.prop(settings, "env_map_tex", text="")
+            split.prop_search(settings, "env_map_tex", bpy.data, "images", text="", icon='IMAGE_DATA')
 
             split = box.row().split(factor=0.4)
             split.alignment = 'LEFT'
@@ -193,7 +278,7 @@ class MATERIAL_PT_dffMaterials(bpy.types.Panel):
             split = box.row().split(factor=0.4)
             split.alignment = 'LEFT'
             split.label(text="Texture")
-            split.prop(settings, "dual_tex", text="")
+            split.prop_search(settings, "dual_tex", bpy.data, "images", text="", icon='IMAGE_DATA')
             
             split = box.row().split(factor=0.4)
             split.alignment = 'LEFT'
@@ -211,7 +296,7 @@ class MATERIAL_PT_dffMaterials(bpy.types.Panel):
             split = box.row().split(factor=0.4)
             split.alignment = 'LEFT'
             split.label(text="Name")
-            split.prop(settings, "animation_name", text="")
+            split.prop(settings, "animation_name", text="", icon='FCURVE')
 
             self.draw_labelled_prop(
                 box.row(), settings, ["force_dual_pass"], "Force Dual Pass")
@@ -225,7 +310,7 @@ class MATERIAL_PT_dffMaterials(bpy.types.Panel):
             split = box.row().split(factor=0.4)
             split.alignment = 'LEFT'
             split.label(text="Texture")
-            split.prop(settings, "specular_texture", text="")
+            split.prop_search(settings, "specular_texture", bpy.data, "images", text="", icon='IMAGE_DATA')
             
             split = box.row().split(factor=0.4)
             split.alignment = 'LEFT'
@@ -265,14 +350,22 @@ class MATERIAL_PT_dffMaterials(bpy.types.Panel):
         layout = self.layout
         settings = context.material.dff
 
-        self.draw_material_prop_box (context, layout.box())
-        self.draw_texture_prop_box  (context, layout.box())
-        self.draw_bump_map_box      (context, layout.box())
-        self.draw_env_map_box       (context, layout.box())
-        self.draw_dual_tex_box      (context, layout.box())
-        self.draw_uv_anim_box       (context, layout.box())
-        self.draw_specl_box         (context, layout.box())
-        self.draw_refl_box          (context, layout.box())
+        box = layout.box()
+        box.label(text="Material Properties")
+        self.draw_material_prop_box (context, box.box())
+        self.draw_texture_prop_box  (context, box.box())
+
+        box = layout.box()
+        box.label(text="Material Effects")
+        self.draw_bump_map_box      (context, box.box())
+        self.draw_env_map_box       (context, box.box())
+        self.draw_dual_tex_box      (context, box.box())
+        self.draw_uv_anim_box       (context, box.box())
+
+        box = layout.box()
+        box.label(text="Rockstar Extensions")
+        self.draw_specl_box         (context, box.box())
+        self.draw_refl_box          (context, box.box())
 
     #######################################################
     # Callback function from preset_mat_cols enum
@@ -319,6 +412,7 @@ class MATERIAL_PT_dffMaterials(bpy.types.Panel):
             return
 
         self.draw_mesh_menu(context)
+
 
 #######################################################@
 class DFF_MT_ExportChoice(bpy.types.Menu):
@@ -490,12 +584,30 @@ class OBJECT_PT_dffObjects(bpy.types.Panel):
 
         box = layout.box()
         box.label(text="Material Surface")
-        
-        box.prop(settings, "col_material", text="Material")
-        box.prop(settings, "col_flags", text="Flags")
-        box.prop(settings, "col_brightness", text="Brightness")
-        box.prop(settings, "col_day_light", text="Day Light")
-        box.prop(settings, "col_night_light", text="Night Light")
+
+        split = box.row().split(factor=0.4)
+        split.alignment = 'LEFT'
+        split.label(text="Material")
+        split.prop(settings, "col_material", text="")
+
+        split = box.row().split(factor=0.4)
+        split.alignment = 'LEFT'
+        split.label(text="Flags")
+        split.prop(settings, "col_flags", text="")
+
+        split = box.row().split(factor=0.4)
+        split.alignment = 'LEFT'
+        split.label(text="Brightness")
+        split.prop(settings, "col_brightness", text="")
+
+        split = box.row().split(factor=0.4)
+        split.alignment = 'LEFT'
+        split.label(text="Light")
+        prop_row = split.row(align=True)
+        prop_row.prop(settings, "col_day_light", text="Day")
+        prop_row.prop(settings, "col_night_light", text="Night")
+
+        draw_col_preset_helper(layout, context)
 
     #######################################################
     def draw_2dfx_menu(self, context):
@@ -613,31 +725,183 @@ class OBJECT_PT_dffCollections(bpy.types.Panel):
 
 # Custom properties
 #######################################################
+class TXDTextureListProps(bpy.types.PropertyGroup):
+    active_index : bpy.props.IntProperty(name="Active Texture Index", default=0)
+
+#######################################################
+class TXDImageProps(bpy.types.PropertyGroup):
+    image_raster      : bpy.props.EnumProperty (items = texture_raster_items,      default="0")
+    image_palette     : bpy.props.EnumProperty (items = texture_palette_items,     default="0")
+    image_compression : bpy.props.EnumProperty (items = texture_compression_items, default="0")
+    image_mipmap      : bpy.props.EnumProperty (items = texture_mipmap_items,      default="0")
+    image_filter      : bpy.props.EnumProperty (items = texture_filter_items,      default="0")
+    image_uaddress    : bpy.props.EnumProperty (items = texture_uvaddress_items,   default="0")
+    image_vaddress    : bpy.props.EnumProperty (items = texture_uvaddress_items,   default="0")
+
+#######################################################
+class TEXTURES_UL_txd_image_list(bpy.types.UIList):
+    def draw_item(self, context, layout, data, item, icon, active_data, active_propname):
+        layout.label(text=item.name, icon='IMAGE_DATA')
+
+    def filter_items(self, context, data, propname):
+        images = getattr(data, propname)
+        flt_flags = [0] * len(images)
+        flt_order = list(range(len(images)))
+
+        obj = context.active_object
+        if not obj:
+            return flt_flags, flt_order
+
+        used_names = set()
+
+        for slot in obj.material_slots:
+            if not slot.material:
+                continue
+            m = slot.material
+            if not m.dff:
+                continue
+            d = m.dff
+            for tex in (d.tex_name, d.env_map_tex, d.bump_map_tex,
+                        d.dual_tex, d.specular_texture):
+                if tex:
+                    used_names.add(tex)
+
+        for i, img in enumerate(images):
+            name = img.name
+            base = name.rsplit('.', 1)[0] if '.' in name else name
+            if base in used_names or name in used_names:
+                flt_flags[i] = self.bitflag_filter_item
+
+        return flt_flags, flt_order
+
+########################################################
+class MATERIAL_PT_txdTextures(bpy.types.Panel):
+    bl_label = "DragonFF - Texture Settings"
+    bl_space_type = 'PROPERTIES'
+    bl_region_type = 'WINDOW'
+    bl_context = "material"
+
+    @classmethod
+    def poll(cls, context):
+        return context.active_object is not None
+
+    def draw(self, context):
+        layout = self.layout
+        obj = context.active_object
+
+        if not obj:
+            return
+
+        layout.template_list(
+            "TEXTURES_UL_txd_image_list",
+            "",
+            bpy.data,
+            "images",
+            context.scene.dff_txd_texture_list,
+            "active_index",
+            rows=3
+        )
+
+        idx = context.scene.dff_txd_texture_list.active_index
+        if idx < 0 or idx >= len(bpy.data.images):
+            return
+
+        img = bpy.data.images[idx]
+        if not hasattr(img, "dff"):
+            return
+
+        box = layout.box()
+        box.label(text=img.name, icon='IMAGE_DATA')
+
+        settings = img.dff
+        split = box.split(factor=0.4)
+        split.label(text="Raster")
+        split.prop(settings, "image_raster", text="")
+
+        split = box.row().split(factor=0.4)
+        split.label(text="Compression")
+        split.prop(settings, "image_compression", text="")
+
+        split = box.row().split(factor=0.4)
+        split.label(text="Mipmaps")
+        split.prop(settings, "image_mipmap", text="")
+
+        split = box.row().split(factor=0.4)
+        split.label(text="Filtering")
+        split.prop(settings, "image_filter", text="")
+
+        split = box.row().split(factor=0.4)
+        split.label(text="Addressing")
+        addr = split.row(align=True)
+        addr.prop(settings, "image_uaddress", text="")
+        addr.prop(settings, "image_vaddress", text="")
+
+########################################################
+def set_texture_fake_user(self, context):
+    if not context.material:
+        return
+
+    # Clear all fake users
+    for image in bpy.data.images:
+        if image.use_fake_user:
+
+            # Check if this image is used in any other material
+            still_used = False
+            for mat in bpy.data.materials:
+                if hasattr(mat, 'dff'):
+                    effect_textures = [
+                        mat.dff.env_map_tex,
+                        mat.dff.bump_map_tex,
+                        mat.dff.dual_tex,
+                        mat.dff.specular_texture
+                    ]
+
+                    if image.name in effect_textures:
+                        still_used = True
+                        break
+
+            if not still_used:
+                image.use_fake_user = False
+
+    # Set fake users again for currently used textures
+    for mat in bpy.data.materials:
+        if hasattr(mat, 'dff'):
+            for tex_name in [
+                mat.dff.env_map_tex,
+                mat.dff.bump_map_tex,
+                mat.dff.dual_tex,
+                mat.dff.specular_texture
+            ]:
+                if tex_name and tex_name in bpy.data.images:
+                    bpy.data.images[tex_name].use_fake_user = True
+
+#######################################################
 class DFFMaterialProps(bpy.types.PropertyGroup):
 
     ambient            : bpy.props.FloatProperty  (name="Ambient Shading",   default=0.5)
     specular           : bpy.props.FloatProperty  (name="Specular Lighting", default=0.5)
     diffuse            : bpy.props.FloatProperty  (name="Diffuse Intensity", default=0.5)
-    tex_filters        : bpy.props.EnumProperty  (items=texture_filters_items, default="0")
-    tex_u_addr         : bpy.props.EnumProperty  (name="", items=texture_uv_addressing_items, default="0")
-    tex_v_addr         : bpy.props.EnumProperty  (name="", items=texture_uv_addressing_items, default="0")
+    tex_name           : bpy.props.StringProperty (name="Texture", update=MATERIAL_PT_dffMaterials.update_texture)
+    tex_filters        : bpy.props.EnumProperty  (items=texture_filter_items, default="0")
+    tex_u_addr         : bpy.props.EnumProperty  (name="", items=texture_uvaddress_items, default="0")
+    tex_v_addr         : bpy.props.EnumProperty  (name="", items=texture_uvaddress_items, default="0")
 
     # Environment Map
     export_env_map     : bpy.props.BoolProperty   (name="Environment Map")
-    env_map_tex        : bpy.props.StringProperty ()
+    env_map_tex        : bpy.props.StringProperty (update=set_texture_fake_user)
     env_map_coef       : bpy.props.FloatProperty  (default=1.0)
     env_map_fb_alpha   : bpy.props.BoolProperty   ()
 
     # Bump Map
     export_bump_map    : bpy.props.BoolProperty   (name="Bump Map")
     bump_map_intensity : bpy.props.FloatProperty  (default=1.0)
-    bump_map_tex       : bpy.props.StringProperty ()
+    bump_map_tex       : bpy.props.StringProperty (update=set_texture_fake_user)
     height_map_tex     : bpy.props.StringProperty ()  # Store internally just in case
     bump_dif_alpha     : bpy.props.BoolProperty   (name="Use Diffuse Alpha")
     
     # Dual Texture
     export_dual_tex    : bpy.props.BoolProperty   (name="Dual Texture")
-    dual_tex           : bpy.props.StringProperty ()
+    dual_tex           : bpy.props.StringProperty (update=set_texture_fake_user)
     dual_src_blend     : bpy.props.EnumProperty  (name="", items=texture_blend_items, default="5")
     dual_dst_blend     : bpy.props.EnumProperty  (name="", items=texture_blend_items, default="6")
 
@@ -670,7 +934,7 @@ class DFFMaterialProps(bpy.types.PropertyGroup):
     # Specularity
     export_specular  : bpy.props.BoolProperty(name="Specular Material")
     specular_level   : bpy.props.FloatProperty  (default=0.1)
-    specular_texture : bpy.props.StringProperty ()
+    specular_texture : bpy.props.StringProperty (update=set_texture_fake_user)
 
     # Pre-set Specular Level
     preset_specular_levels : bpy.props.EnumProperty(
@@ -880,6 +1144,9 @@ compatibiility with DFF Viewers"
 
     # CULL properties
     cull: bpy.props.PointerProperty(type=CULLObjectProps)
+
+    # COL properties
+    col_mat: bpy.props.PointerProperty(type=COLMaterialEnumProps)
 
     # Miscellaneous properties
     is_frame_locked : bpy.props.BoolProperty()

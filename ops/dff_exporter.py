@@ -37,6 +37,16 @@ class material_helper:
 
     """ Material Helper for Blender 2.7x and 2.8 compatibility"""
 
+    ########################################################
+    def clean_texture_name(self, name):
+        if '/' in name:
+            parts = name.split('/')
+            if len(parts) >= 2:
+                name = parts[1]
+
+        k = name.rfind('.')
+        return name if k < 0 else name[:k]
+
     #######################################################
     def get_base_color(self):
 
@@ -103,7 +113,7 @@ class material_helper:
         if not self.material.dff.export_bump_map:
             return None
 
-        bump_texture_name = self.material.dff.bump_map_tex
+        bump_texture_name = self.clean_texture_name(self.material.dff.bump_map_tex)
         intensity = self.material.dff.bump_map_intensity
         bump_dif_alpha = self.material.dff.bump_dif_alpha
 
@@ -128,7 +138,7 @@ class material_helper:
         if not self.material.dff.export_env_map:
             return None
 
-        texture_name = self.material.dff.env_map_tex
+        texture_name = self.clean_texture_name(self.material.dff.env_map_tex) 
         coef         = self.material.dff.env_map_coef
         use_fb_alpha  = self.material.dff.env_map_fb_alpha
 
@@ -144,7 +154,7 @@ class material_helper:
         if not self.material.dff.export_dual_tex:
             return None
 
-        texture_name = self.material.dff.dual_tex
+        texture_name = self.clean_texture_name(self.material.dff.dual_tex)
         src_blend    = int(self.material.dff.dual_src_blend)
         dst_blend    = int(self.material.dff.dual_dst_blend)
 
@@ -162,8 +172,10 @@ class material_helper:
         if not props.export_specular:
             return None
 
+        clean_name = self.clean_texture_name(props.specular_texture) 
+
         return dff.SpecularMat(props.specular_level,
-                               props.specular_texture.encode('ascii'))
+                               clean_name.encode('ascii'))
 
     #######################################################
     def get_reflection_material(self):

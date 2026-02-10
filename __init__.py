@@ -57,6 +57,7 @@ _classes = [
     gui.OBJECT_OT_dff_add_2dfx_cover_point,
     gui.OBJECT_OT_dff_add_2dfx_escalator,
     gui.OBJECT_OT_dff_add_cull,
+    gui.MATERIAL_PT_txdTextures, #
     gui.MATERIAL_PT_dffMaterials,
     gui.OBJECT_PT_dffObjects,
     gui.OBJECT_PT_dffCollections,
@@ -67,6 +68,7 @@ _classes = [
     gui.CULLObjectProps,
     gui.IMPORT_OT_ParticleTXDNames,
     gui.DFFMaterialProps,
+    gui.COLMaterialEnumProps,
     gui.DFFObjectProps,
     gui.DFFCollectionProps,
     gui.MapImportPanel,
@@ -94,7 +96,11 @@ _classes = [
     gui.Escalator2DFXGizmoGroup,
     gui.UVAnimatorProperties,
     gui.UV_OT_AnimateSpriteSheet,
-    gui.NODE_PT_UVAnimator
+    gui.NODE_PT_UVAnimator,
+    gui.COLSceneProps,
+    gui.TXDImageProps,
+    gui.TXDTextureListProps,
+    gui.TEXTURES_UL_txd_image_list
 ]
 
 #######################################################
@@ -111,6 +117,9 @@ def register():
     bpy.types.Object.dff = bpy.props.PointerProperty(type=gui.DFFObjectProps)
     bpy.types.Collection.dff = bpy.props.PointerProperty(type=gui.DFFCollectionProps)
     bpy.types.Scene.dff_uv_animator_props = bpy.props.PointerProperty(type=gui.UVAnimatorProperties)
+    bpy.types.Scene.dff_col = bpy.props.PointerProperty(type=gui.COLSceneProps)
+    bpy.types.Image.dff = bpy.props.PointerProperty(type=gui.TXDImageProps)
+    bpy.types.Scene.dff_txd_texture_list = bpy.props.PointerProperty(type=gui.TXDTextureListProps)
 
     bpy.types.TOPBAR_MT_file_import.append(gui.import_dff_func)
     bpy.types.TOPBAR_MT_file_export.append(gui.export_dff_func)
@@ -132,6 +141,9 @@ def unregister():
     del bpy.types.Object.dff
     del bpy.types.Collection.dff
     del bpy.types.Scene.dff_uv_animator_props
+    del bpy.types.Scene.dff_col
+    del bpy.types.Image.dff
+    del bpy.types.Scene.dff_txd_texture_list
 
     bpy.types.TOPBAR_MT_file_import.remove(gui.import_dff_func)
     bpy.types.TOPBAR_MT_file_export.remove(gui.export_dff_func)
