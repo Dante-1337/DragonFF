@@ -706,12 +706,54 @@ class EXPORT_OT_txd(bpy.types.Operator, ExportHelper):
         default         = True
     )
 
+    dxt_quality: bpy.props.EnumProperty(
+        name="Quality",
+        description="Change the compression algorithm used",
+        items=[
+            ("Poor", "Poor", "Poor quality, fast speed"),
+            ("Good", "Good", "Good quality, good speed"),
+            ("Best", "Best", "Best quality, slow speed"),
+        ],
+        default='Good'
+    )
+
+    dxt_metric: bpy.props.EnumProperty(
+        name="Metric",
+        description="Change the color metric used",
+        items=[
+            ("Uniform", "Uniform", "Uniform color weights"),
+            ("Perceptual", "Perceptual", "Perceptual color weights"),
+        ],
+        default='Perceptual'
+    )
+
     #######################################################
     def draw(self, context):
         layout = self.layout
 
-        layout.prop(self, "mass_export")
-        layout.prop(self, "only_used_textures")
+        # Export settings
+        main_box = layout.box()
+        main_box.label(text="Export Settings")
+
+        row = main_box.row()
+        row.label(text="Mass Export")
+        row.prop(self, "mass_export", text="")
+
+        row = main_box.row()
+        row.label(text="Only Used Textures")
+        row.prop(self, "only_used_textures", text="")
+
+        # Compression settings
+        box = layout.box()
+        box.label(text="Compression Settings")
+
+        split = box.row().split(factor=0.3)
+        split.label(text="Quality")
+        split.prop(self, "dxt_quality", text="")
+
+        split = box.row().split(factor=0.3)
+        split.label(text="Metric")
+        split.prop(self, "dxt_metric", text="")
 
         return None
 
@@ -726,6 +768,8 @@ class EXPORT_OT_txd(bpy.types.Operator, ExportHelper):
                     "directory"          : self.directory,
                     "mass_export"        : self.mass_export,
                     "only_used_textures" : self.only_used_textures,
+                    "dxt_quality"        : self.dxt_quality,
+                    "dxt_metric"         : self.dxt_metric,
                     "version"            : 0x36003, # TODO: more versions support
                 }
             )

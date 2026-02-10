@@ -21,6 +21,7 @@ import re
 from ..gtaLib import txd
 from ..gtaLib.txd import ImageEncoder
 from ..gtaLib.dff import NativePlatformType
+from ..lib import squish
 
 #######################################################
 def clear_extension(string):
@@ -29,10 +30,15 @@ def clear_extension(string):
 
 #######################################################
 class txd_exporter:
+    dxt_used    = True
+    dxt_format  = 'DXT5'        # 'DXT1', 'DXT2', 'DXT3', 'DXT4', 'DXT5'
+    dxt_quality = 'Good'        # 'Best', 'Good', 'Poor'
+    dxt_metric  = 'Perceptual'  # 'Uniform', 'Perceptual
+
+    has_mipmaps = False
 
     mass_export = False
     only_used_textures = True
-    has_mipmaps = False
     version = None
     file_name = ""
     path = ""
@@ -50,11 +56,14 @@ class txd_exporter:
             row_pixels = pixels[offset:offset + width * 4]
             rgba_data.extend(int(round(p * 0xff)) for p in row_pixels)
 
+        # Detect if image actually has alpha channel
+        has_alpha = txd_exporter.detect_alpha_channel(rgba_data)
+
         texture_native = txd.TextureNative()
         texture_native.platform_id = NativePlatformType.D3D9
         texture_native.filter_mode = 0x06  # Linear Mip Linear (Trilinear)
         texture_native.uv_addressing = 0b00010001  # Wrap for both U and V
-        
+
         # Clean texture name - remove invalid characters and limit length
         clean_name = "".join(c for c in image_name if c.isalnum() or c in "_-.")
         clean_name = clean_name[:31]  # Limit to 31 chars (32 with null terminator)
@@ -62,24 +71,59 @@ class txd_exporter:
             clean_name = "texture"
         texture_native.name = clean_name
         texture_native.mask = ""
-        
-        # Raster format flags for RGBA8888: format type (8888=5) at bit 8-11, no mipmaps, no palette
-        texture_native.raster_format_flags = txd.RasterFormat.RASTER_8888 << 8
-        texture_native.d3d_format = txd_exporter.get_d3d_from_raster(texture_native.get_raster_format_type())
+
+        # Determine if we should use DXT compression
+        use_dxt = txd_exporter.dxt_used and txd_exporter.dxt_format in ('DXT1', 'DXT2', 'DXT3', 'DXT4', 'DXT5')
+
+        if use_dxt:
+            # Raster format flags: set the format type based on DXT variant and alpha
+            if txd_exporter.dxt_format == 'DXT1':
+                if has_alpha:
+                    texture_native.raster_format_flags = txd.RasterFormat.RASTER_1555 << 8
+                else:
+                    texture_native.raster_format_flags = txd.RasterFormat.RASTER_565 << 8
+            else:
+                texture_native.raster_format_flags = txd.RasterFormat.RASTER_4444 << 8
+
+            if txd_exporter.dxt_format == 'DXT1':
+                texture_native.d3d_format = txd.D3DFormat.D3D_DXT1
+            elif txd_exporter.dxt_format == 'DXT2':
+                texture_native.d3d_format = txd.D3DFormat.D3D_DXT2
+            elif txd_exporter.dxt_format == 'DXT3':
+                texture_native.d3d_format = txd.D3DFormat.D3D_DXT3
+            elif txd_exporter.dxt_format == 'DXT4':
+                texture_native.d3d_format = txd.D3DFormat.D3D_DXT4
+            elif txd_exporter.dxt_format == 'DXT5':
+                texture_native.d3d_format = txd.D3DFormat.D3D_DXT5
+
+            texture_native.depth = 16
+
+            texture_native.platform_properties = type('PlatformProperties', (), {
+                'alpha': has_alpha,
+                'cube_texture': False,
+                'auto_mipmaps': False,
+                'compressed': True
+            })()
+
+        else:
+            texture_native.raster_format_flags = txd.RasterFormat.RASTER_8888 << 8
+            texture_native.d3d_format = txd_exporter.get_d3d_from_raster(texture_native.get_raster_format_type())
+            texture_native.depth = txd_exporter.get_depth_from_raster(texture_native.get_raster_format_type())
+
+            # Platform properties
+            texture_native.platform_properties = type('PlatformProperties', (), {
+                'alpha': True,
+                'cube_texture': False,
+                'auto_mipmaps': False,
+                'compressed': False
+            })()
+
         texture_native.width = width
         texture_native.height = height
-        texture_native.depth = txd_exporter.get_depth_from_raster(texture_native.get_raster_format_type())
         texture_native.num_levels = 1
         texture_native.raster_type = 4  # Texture
-        
-        texture_native.platform_properties = type('PlatformProperties', (), {
-            'alpha': True,
-            'cube_texture': False,
-            'auto_mipmaps': False,
-            'compressed': False
-        })()
-        
-        # No palette for RGBA8888 format
+
+        # No palette for any format we're using
         texture_native.palette = b''
 
         # Generate mipmaps
@@ -91,20 +135,49 @@ class txd_exporter:
 
         texture_native.num_levels = len(mip_levels)
 
-        encoder = txd_exporter.get_encoder_from_raster(texture_native.get_raster_format_type())
+        # Encode pixels based on compression type
+        if use_dxt:
+            # DXT compression path
+            compressor = squish.get_compressor()
+            texture_native.pixels = []
 
-        # Convert and pad each level
-        texture_native.pixels = [
-            txd_exporter.pad_mipmap_level(
-                encoder(level_data),
-                mip_width,
-                mip_height,
-                texture_native.depth
-            )
-            for mip_width, mip_height, level_data in mip_levels
-        ]
+            # Determine if we need to premultiply alpha (DXT2/DXT4)
+            premultiply = txd_exporter.dxt_format in ('DXT2', 'DXT4')
+
+            for mip_width, mip_height, level_data in mip_levels:
+                compressed = compressor.compress(
+                    level_data,
+                    mip_width,
+                    mip_height,
+                    compression_type=txd_exporter.dxt_format,
+                    quality=txd_exporter.dxt_quality,
+                    metric=txd_exporter.dxt_metric,
+                    premultiply_alpha=premultiply
+                )
+                texture_native.pixels.append(compressed)
+
+        else:
+            encoder = txd_exporter.get_encoder_from_raster(texture_native.get_raster_format_type())
+
+            texture_native.pixels = [
+                txd_exporter.pad_mipmap_level(
+                    encoder(level_data),
+                    mip_width,
+                    mip_height,
+                    texture_native.depth
+                )
+                for mip_width, mip_height, level_data in mip_levels
+            ]
 
         return texture_native
+
+    #######################################################
+    @staticmethod
+    def detect_alpha_channel(rgba_data):
+        for i in range(3, len(rgba_data), 4):
+            if rgba_data[i] < 255:
+                return True
+        return False
 
     ########################################################
     @staticmethod
@@ -152,12 +225,12 @@ class txd_exporter:
         row_bytes = (width * depth + 7) // 8
         row_size = ((row_bytes + 3) // 4) * 4
         aligned_size = row_size * height
-        
+
         if len(pixel_data) < aligned_size:
             padded = bytearray(pixel_data)
             padded.extend(b'\x00' * (aligned_size - len(pixel_data)))
             return bytes(padded)
-        
+
         return pixel_data
 
     #######################################################
@@ -165,17 +238,17 @@ class txd_exporter:
     def generate_mipmaps(rgba_data, width, height):
         # Generates full mipmap chain including 1x1 similar to how magictxd does it with 2x2 box filter, edge clamp, float averaging + round to nearest
         mipmaps = [(width, height, rgba_data)]
-      
+
         current_width = width
         current_height = height
         current_data = rgba_data
-      
+
         while current_width > 1 or current_height > 1:
             new_width = max(1, current_width // 2)
             new_height = max(1, current_height // 2)
-          
+
             new_data = bytearray(new_width * new_height * 4)
-          
+
             for y in range(new_height):
                 for x in range(new_width):
                     r_sum = g_sum = b_sum = a_sum = 0.0
@@ -185,7 +258,7 @@ class txd_exporter:
                         for dx in range(2):
                             sx = min(x * 2 + dx, current_width - 1)
                             offset = row_offset + sx * 4
-                          
+
                             r_sum += current_data[offset]
                             g_sum += current_data[offset + 1]
                             b_sum += current_data[offset + 2]
@@ -194,20 +267,19 @@ class txd_exporter:
                     avg_g = round(g_sum / 4.0)
                     avg_b = round(b_sum / 4.0)
                     avg_a = round(a_sum / 4.0)
-                  
+
                     out_offset = (y * new_width + x) * 4
                     new_data[out_offset] = int(avg_r)
                     new_data[out_offset + 1] = int(avg_g)
                     new_data[out_offset + 2] = int(avg_b)
                     new_data[out_offset + 3] = int(avg_a)
-          
-            mip_data = bytes(new_data)
-            mipmaps.append((new_width, new_height, mip_data))
-          
+
+            mipmaps.append((new_width, new_height, new_data))
+
             current_width = new_width
             current_height = new_height
-            current_data = mip_data
-      
+            current_data = new_data
+
         return mipmaps
 
     #######################################################
@@ -226,10 +298,10 @@ class txd_exporter:
     def get_used_textures(objects_to_scan=None):
         """Collect textures that are used in scene materials"""
         used_textures = set()
-        
+
         # Use provided objects or all scene objects
         objects = objects_to_scan if objects_to_scan is not None else bpy.context.scene.objects
-        
+
         for obj in objects:
             for mat_slot in obj.material_slots:
                 mat = mat_slot.material
@@ -242,6 +314,9 @@ class txd_exporter:
 
                 for node in node_tree.nodes:
                     if node.type == 'TEX_IMAGE':
+                        if not node.image:
+                            continue
+
                         texture_name = clear_extension(node.label or node.image.name)
                         used_textures.add((texture_name, node.image))
 
@@ -332,7 +407,7 @@ class txd_exporter:
                 print(f"Exporting textures for object '{obj.name}' to {file_name}")
 
                 # Export textures used by this specific object only
-                self.export_txd([obj], file_name)
+                self.export_textures([obj], file_name)
                 selected_objects_num += 1
 
             print(f"Mass export completed for {selected_objects_num} objects")
@@ -343,9 +418,13 @@ class txd_exporter:
 #######################################################
 def export_txd(options):
 
+
     txd_exporter.mass_export        = options.get('mass_export', False)
     txd_exporter.only_used_textures = options.get('only_used_textures', True)
     txd_exporter.version            = options.get('version', 0x36003)
+
+    txd_exporter.dxt_quality        = options.get('dxt_quality', 'GOOD')
+    txd_exporter.dxt_metric         = options.get('dxt_metric', 'PERCEPTUAL')
 
     txd_exporter.path               = options['directory']
 
