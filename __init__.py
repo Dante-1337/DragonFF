@@ -100,7 +100,8 @@ _classes = [
     gui.COLSceneProps,
     gui.TXDImageProps,
     gui.TXDTextureListProps,
-    gui.TEXTURES_UL_txd_image_list
+    gui.TEXTURES_UL_txd_image_list,
+    gui.MATERIAL_OT_dff_import_uv_anim,
 ]
 
 #######################################################

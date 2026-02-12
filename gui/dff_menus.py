@@ -13,6 +13,8 @@ from .cull_menus import CULLObjectProps, CULLMenus
 from ..gtaLib.data import presets
 from .col_menus import draw_col_preset_helper
 from .col_menus import COLMaterialEnumProps
+from ..gtaLib.dff import dff
+from ..ops.importer_common import material_helper
 
 texture_raster_items = (
     ("0", "Default", ""),
@@ -94,41 +96,39 @@ class MATERIAL_PT_dffMaterials(bpy.types.Panel):
 
     ########################################################
     def update_texture(self, context):
-        mat = context.material
-        if not mat or not mat.node_tree:
+        material = getattr(context, "material", None)
+        if material is None or not material.node_tree:
             return
 
-        principled = next((n for n in mat.node_tree.nodes if n.type == 'BSDF_PRINCIPLED'), None)
+        principled = next((n for n in material.node_tree.nodes if n.type == 'BSDF_PRINCIPLED'), None)
         if not principled:
             return
 
         image_node = None
-        for link in mat.node_tree.links:
+        for link in material.node_tree.links:
             if link.to_node == principled and link.to_socket.name == 'Base Color':
                 if link.from_node.type == 'TEX_IMAGE':
                     image_node = link.from_node
                     break
 
-        tex_name = mat.dff.tex_name
+        tex_name = self.tex_name
 
         if tex_name:
             image = bpy.data.images.get(tex_name)
             if image:
                 if not image_node:
-                    image_node = mat.node_tree.nodes.new(type='ShaderNodeTexImage')
-                    mat.node_tree.links.new(image_node.outputs['Color'], principled.inputs['Base Color'])
-                    mat.node_tree.links.new(image_node.outputs['Alpha'], principled.inputs['Alpha'])
+                    image_node = material.node_tree.nodes.new(type='ShaderNodeTexImage')
+                    material.node_tree.links.new(image_node.outputs['Color'], principled.inputs['Base Color'])
+                    material.node_tree.links.new(image_node.outputs['Alpha'], principled.inputs['Alpha'])
 
                 image_node.image = image
                 image_node.label = tex_name
         else:
             if image_node:
-
-                for link in list(mat.node_tree.links):
+                for link in list(material.node_tree.links):
                     if link.from_node == image_node:
-                        mat.node_tree.links.remove(link)
-
-                mat.node_tree.nodes.remove(image_node)
+                        material.node_tree.links.remove(link)
+                material.node_tree.nodes.remove(image_node)
 
     #######################################################
     def draw_col_menu(self, context):
@@ -179,6 +179,8 @@ class MATERIAL_PT_dffMaterials(bpy.types.Panel):
 
         prop_row = split.row(align=True)
         prop_row.prop_search(settings, "tex_name", bpy.data, "images", text="", icon='IMAGE_DATA')
+        op = prop_row.operator("image.open", text="", icon='FILEBROWSER')
+        op.filter_image = True; op.filter_movie = False
 
         split = box.row().split(factor=0.4)
         split.alignment = 'LEFT'
@@ -238,10 +240,14 @@ class MATERIAL_PT_dffMaterials(bpy.types.Panel):
         
         if settings.export_bump_map:
             split = box.row().split(factor=0.4)
-            split.alignment = 'LEFT'
             split.label(text="Texture")
-            split.prop_search(settings, "bump_map_tex", bpy.data, "images", text="", icon='IMAGE_DATA')
-            
+
+            prop_row = split.row(align=True)
+            prop_row.prop_search(settings, "bump_map_tex", bpy.data, "images", text="", icon='IMAGE_DATA')
+
+            op = prop_row.operator("image.open", text="", icon='FILEBROWSER')
+            op.filter_image = True; op.filter_movie = False
+
             split = box.row().split(factor=0.4)
             split.alignment = 'LEFT'
             split.label(text="Intensity")
@@ -257,9 +263,13 @@ class MATERIAL_PT_dffMaterials(bpy.types.Panel):
         
         if settings.export_env_map:
             split = box.row().split(factor=0.4)
-            split.alignment = 'LEFT'
             split.label(text="Texture")
-            split.prop_search(settings, "env_map_tex", bpy.data, "images", text="", icon='IMAGE_DATA')
+
+            prop_row = split.row(align=True)
+            prop_row.prop_search(settings, "env_map_tex", bpy.data, "images", text="", icon='IMAGE_DATA')
+
+            op = prop_row.operator("image.open", text="", icon='FILEBROWSER')
+            op.filter_image = True; op.filter_movie = False
 
             split = box.row().split(factor=0.4)
             split.alignment = 'LEFT'
@@ -276,9 +286,13 @@ class MATERIAL_PT_dffMaterials(bpy.types.Panel):
         
         if settings.export_dual_tex:
             split = box.row().split(factor=0.4)
-            split.alignment = 'LEFT'
             split.label(text="Texture")
-            split.prop_search(settings, "dual_tex", bpy.data, "images", text="", icon='IMAGE_DATA')
+
+            prop_row = split.row(align=True)
+            prop_row.prop_search(settings, "dual_tex", bpy.data, "images", text="", icon='IMAGE_DATA')
+
+            op = prop_row.operator("image.open", text="", icon='FILEBROWSER')
+            op.filter_image = True; op.filter_movie = False
             
             split = box.row().split(factor=0.4)
             split.alignment = 'LEFT'
@@ -291,12 +305,20 @@ class MATERIAL_PT_dffMaterials(bpy.types.Panel):
     def draw_uv_anim_box(self, context, box):
         settings = context.material.dff
         box.row().prop(settings, "export_animation")
-        
+
         if settings.export_animation:
-            split = box.row().split(factor=0.4)
+            row = box.row(align=True)
+
+            split = row.split(factor=0.4)
             split.alignment = 'LEFT'
             split.label(text="Name")
-            split.prop(settings, "animation_name", text="", icon='FCURVE')
+
+            sub = split.row(align=True)
+            sub.prop(settings, "animation_name", text="", icon='FCURVE')
+
+            op = sub.operator("material.dff_import_uv_anim", text="", icon='FILEBROWSER')
+            if context.active_object and context.active_object.active_material:
+                op.material_name = context.active_object.active_material.name
 
             self.draw_labelled_prop(
                 box.row(), settings, ["force_dual_pass"], "Force Dual Pass")
@@ -308,9 +330,13 @@ class MATERIAL_PT_dffMaterials(bpy.types.Panel):
         
         if settings.export_specular:
             split = box.row().split(factor=0.4)
-            split.alignment = 'LEFT'
             split.label(text="Texture")
-            split.prop_search(settings, "specular_texture", bpy.data, "images", text="", icon='IMAGE_DATA')
+
+            prop_row = split.row(align=True)
+            prop_row.prop_search(settings, "specular_texture", bpy.data, "images", text="", icon='IMAGE_DATA')
+
+            op = prop_row.operator("image.open", text="", icon='FILEBROWSER')
+            op.filter_image = True; op.filter_movie = False
             
             split = box.row().split(factor=0.4)
             split.alignment = 'LEFT'
@@ -478,6 +504,51 @@ class DFF_MT_Pose(bpy.types.Menu):
 def pose_dff_func(self, context):
     self.layout.separator()
     self.layout.menu("DFF_MT_Pose", text="DragonFF")
+
+#######################################################  
+class MATERIAL_OT_dff_import_uv_anim(bpy.types.Operator, material_helper):
+    bl_idname = "material.dff_import_uv_anim"
+    bl_label = "Import UV Animation"
+    bl_description = "Import UV animation from another DFF file"
+
+    filename_ext = ".dff"
+    filter_glob: bpy.props.StringProperty(default="*.dff", options={'HIDDEN'})
+    filepath: bpy.props.StringProperty(subtype='FILE_PATH')
+    material_name: bpy.props.StringProperty(options={'HIDDEN'})
+
+    def invoke(self, context, event):
+        if not self.filepath:
+            self.filepath = ""
+
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+    def execute(self, context):
+        material = bpy.data.materials.get(self.material_name)
+        if not material:
+            self.report({'ERROR'}, "Material not found")
+            return {'CANCELLED'}
+
+        try:
+            dff_instance = dff()
+            dff_instance.load_file(self.filepath)
+
+            if not dff_instance.uvanim_dict:
+                self.report({'ERROR'}, "No UV animation found in file")
+                return {'CANCELLED'}
+
+            uv_anim = dff_instance.uvanim_dict[0]
+
+            helper = material_helper(material)
+            helper.set_uv_animation(uv_anim)
+
+            self.report({'INFO'}, f"Imported UV animation: {uv_anim.name}")
+
+        except Exception as e:
+            self.report({'ERROR'}, f"Failed to import: {str(e)}")
+            return {'CANCELLED'}
+
+        return {'FINISHED'}
 
 #######################################################
 class OBJECT_PT_dffObjects(bpy.types.Panel):
@@ -733,15 +804,15 @@ class TXDImageProps(bpy.types.PropertyGroup):
     image_raster      : bpy.props.EnumProperty (items = texture_raster_items,      default="0")
     image_palette     : bpy.props.EnumProperty (items = texture_palette_items,     default="0")
     image_compression : bpy.props.EnumProperty (items = texture_compression_items, default="0")
-    image_mipmap      : bpy.props.EnumProperty (items = texture_mipmap_items,      default="0")
-    image_filter      : bpy.props.EnumProperty (items = texture_filter_items,      default="0")
-    image_uaddress    : bpy.props.EnumProperty (items = texture_uvaddress_items,   default="0")
-    image_vaddress    : bpy.props.EnumProperty (items = texture_uvaddress_items,   default="0")
+    image_mipmap      : bpy.props.EnumProperty (items = texture_mipmap_items,      default="1")
+    image_filter      : bpy.props.EnumProperty (items = texture_filter_items,      default="6")
+    image_uaddress    : bpy.props.EnumProperty (items = texture_uvaddress_items,   default="1")
+    image_vaddress    : bpy.props.EnumProperty (items = texture_uvaddress_items,   default="1")
 
 #######################################################
 class TEXTURES_UL_txd_image_list(bpy.types.UIList):
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname):
-        layout.label(text=item.name, icon='IMAGE_DATA')
+        layout.label(text=item.name, icon_value=item.preview.icon_id)
 
     def filter_items(self, context, data, propname):
         images = getattr(data, propname)
@@ -768,8 +839,16 @@ class TEXTURES_UL_txd_image_list(bpy.types.UIList):
 
         for i, img in enumerate(images):
             name = img.name
-            base = name.rsplit('.', 1)[0] if '.' in name else name
-            if base in used_names or name in used_names:
+            if '/' in name:
+                parts = name.split('/')
+                if len(parts) >= 2:
+                    tex_name = parts[1]
+                else:
+                    tex_name = name
+            else:
+                tex_name = name.rsplit('.', 1)[0] if '.' in name else name
+
+            if name in used_names or tex_name in used_names:
                 flt_flags[i] = self.bitflag_filter_item
 
         return flt_flags, flt_order
@@ -802,35 +881,78 @@ class MATERIAL_PT_txdTextures(bpy.types.Panel):
             rows=3
         )
 
-        idx = context.scene.dff_txd_texture_list.active_index
-        if idx < 0 or idx >= len(bpy.data.images):
+        used_names = set()
+        for slot in obj.material_slots:
+            if not slot.material:
+                continue
+            m = slot.material
+            if not m.dff:
+                continue
+            d = m.dff
+            for tex in (d.tex_name, d.env_map_tex, d.bump_map_tex,
+                        d.dual_tex, d.specular_texture):
+                if tex:
+                    used_names.add(tex)
+
+        active_idx = context.scene.dff_txd_texture_list.active_index
+
+        if active_idx < 0 or active_idx >= len(bpy.data.images):
             return
 
-        img = bpy.data.images[idx]
+        img = bpy.data.images[active_idx]
+
         if not hasattr(img, "dff"):
             return
 
-        box = layout.box()
-        box.label(text=img.name, icon='IMAGE_DATA')
+        # Check if this image is used by the current object
+        name = img.name
+        if '/' in name:
+            parts = name.split('/')
+            if len(parts) >= 2:
+                tex_name = parts[1]
+            else:
+                tex_name = name
+        else:
+            tex_name = name.rsplit('.', 1)[0] if '.' in name else name
+
+        if name not in used_names and tex_name not in used_names:
+            return
 
         settings = img.dff
-        split = box.split(factor=0.4)
+
+        box = layout.box()
+        row = box.row()
+        split = row.split(factor=0.4)
+
+        # Preview
+        preview_box = split.box()
+        preview_col = preview_box.column(align=True)
+
+        if img.preview.icon_id != 0:
+            preview_col.template_icon(img.preview.icon_id, scale=6.6)
+        else:
+            preview_col.label(text="No preview available")
+
+        # Properties Box
+        props_box = split.box()
+
+        split = props_box.split(factor=0.4)
         split.label(text="Raster")
         split.prop(settings, "image_raster", text="")
 
-        split = box.row().split(factor=0.4)
+        split = props_box.split(factor=0.4)
         split.label(text="Compression")
         split.prop(settings, "image_compression", text="")
 
-        split = box.row().split(factor=0.4)
+        split = props_box.split(factor=0.4)
         split.label(text="Mipmaps")
         split.prop(settings, "image_mipmap", text="")
 
-        split = box.row().split(factor=0.4)
+        split = props_box.split(factor=0.4)
         split.label(text="Filtering")
         split.prop(settings, "image_filter", text="")
 
-        split = box.row().split(factor=0.4)
+        split = props_box.split(factor=0.4)
         split.label(text="Addressing")
         addr = split.row(align=True)
         addr.prop(settings, "image_uaddress", text="")
@@ -838,6 +960,11 @@ class MATERIAL_PT_txdTextures(bpy.types.Panel):
 
 ########################################################
 def set_texture_fake_user(self, context):
+    # This is needed, otherwise when saving .blend files, blender wont save textures used in material effects
+
+    if getattr(context, "material", None) is None:
+        return
+
     if not context.material:
         return
 

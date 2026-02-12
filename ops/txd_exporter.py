@@ -23,6 +23,26 @@ from ..gtaLib.txd import ImageEncoder
 from ..gtaLib.dff import NativePlatformType
 from ..lib import squish
 
+_RASTER_TO_FORMAT = {
+    "0": None,
+    "1": txd.RasterFormat.RASTER_8888,
+    "2": txd.RasterFormat.RASTER_4444,
+    "3": txd.RasterFormat.RASTER_1555,
+    "4": txd.RasterFormat.RASTER_888,
+    "5": txd.RasterFormat.RASTER_565,
+    "6": txd.RasterFormat.RASTER_555,
+    "7": txd.RasterFormat.RASTER_LUM,
+}
+
+_COMPRESSION_TO_DXT = {
+    "0": None,
+    "1": "DXT1",
+    "2": "DXT2",
+    "3": "DXT3",
+    "4": "DXT4",
+    "5": "DXT5",
+}
+
 #######################################################
 def clear_extension(string):
     k = string.rfind('.')
@@ -30,12 +50,8 @@ def clear_extension(string):
 
 #######################################################
 class txd_exporter:
-    dxt_used    = True
-    dxt_format  = 'DXT5'        # 'DXT1', 'DXT2', 'DXT3', 'DXT4', 'DXT5'
     dxt_quality = 'Good'        # 'Best', 'Good', 'Poor'
     dxt_metric  = 'Perceptual'  # 'Uniform', 'Perceptual
-
-    has_mipmaps = False
 
     mass_export = False
     only_used_textures = True
@@ -50,19 +66,27 @@ class txd_exporter:
         pixels = list(image.pixels)
         width, height = image.size
 
+        image_palette     = getattr(image.dff, 'image_palette', '0') # TODO
+        image_raster      = _RASTER_TO_FORMAT[getattr(image.dff, 'image_raster', '0')]
+        image_compression = _COMPRESSION_TO_DXT[getattr(image.dff, 'image_compression', '5')]
+        image_mipmap      = getattr(image.dff, 'image_mipmap', '1') == '1'
+        image_filter      = int(getattr(image.dff, 'image_filter', '6'))
+        image_uaddress    = int(getattr(image.dff, 'image_uaddress', '1'))
+        image_vaddress    = int(getattr(image.dff, 'image_vaddress', '1'))
+
         rgba_data = bytearray()
         for h in range(height - 1, -1, -1):
             offset = h * width * 4
             row_pixels = pixels[offset:offset + width * 4]
             rgba_data.extend(int(round(p * 0xff)) for p in row_pixels)
 
-        # Detect if image actually has alpha channel
+        # Detect if image has alpha channel
         has_alpha = txd_exporter.detect_alpha_channel(rgba_data)
 
         texture_native = txd.TextureNative()
         texture_native.platform_id = NativePlatformType.D3D9
-        texture_native.filter_mode = 0x06  # Linear Mip Linear (Trilinear)
-        texture_native.uv_addressing = 0b00010001  # Wrap for both U and V
+        texture_native.filter_mode = image_filter
+        texture_native.uv_addressing = image_uaddress << 4 | image_vaddress
 
         # Clean texture name - remove invalid characters and limit length
         clean_name = "".join(c for c in image_name if c.isalnum() or c in "_-.")
@@ -72,12 +96,9 @@ class txd_exporter:
         texture_native.name = clean_name
         texture_native.mask = ""
 
-        # Determine if we should use DXT compression
-        use_dxt = txd_exporter.dxt_used and txd_exporter.dxt_format in ('DXT1', 'DXT2', 'DXT3', 'DXT4', 'DXT5')
-
-        if use_dxt:
+        if image_compression is not None:
             # Raster format flags: set the format type based on DXT variant and alpha
-            if txd_exporter.dxt_format == 'DXT1':
+            if image_compression == 'DXT1':
                 if has_alpha:
                     texture_native.raster_format_flags = txd.RasterFormat.RASTER_1555 << 8
                 else:
@@ -85,15 +106,15 @@ class txd_exporter:
             else:
                 texture_native.raster_format_flags = txd.RasterFormat.RASTER_4444 << 8
 
-            if txd_exporter.dxt_format == 'DXT1':
+            if image_compression == 'DXT1':
                 texture_native.d3d_format = txd.D3DFormat.D3D_DXT1
-            elif txd_exporter.dxt_format == 'DXT2':
+            elif image_compression == 'DXT2':
                 texture_native.d3d_format = txd.D3DFormat.D3D_DXT2
-            elif txd_exporter.dxt_format == 'DXT3':
+            elif image_compression == 'DXT3':
                 texture_native.d3d_format = txd.D3DFormat.D3D_DXT3
-            elif txd_exporter.dxt_format == 'DXT4':
+            elif image_compression == 'DXT4':
                 texture_native.d3d_format = txd.D3DFormat.D3D_DXT4
-            elif txd_exporter.dxt_format == 'DXT5':
+            elif image_compression == 'DXT5':
                 texture_native.d3d_format = txd.D3DFormat.D3D_DXT5
 
             texture_native.depth = 16
@@ -106,13 +127,21 @@ class txd_exporter:
             })()
 
         else:
-            texture_native.raster_format_flags = txd.RasterFormat.RASTER_8888 << 8
+            if image_raster is not None:
+                texture_native.raster_format_flags = image_raster << 8
+            else:
+                # We pick a format based on alpha presence
+                if has_alpha:
+                    texture_native.raster_format_flags = txd.RasterFormat.RASTER_8888 << 8
+                else:
+                    texture_native.raster_format_flags = txd.RasterFormat.RASTER_888 << 8
+
             texture_native.d3d_format = txd_exporter.get_d3d_from_raster(texture_native.get_raster_format_type())
             texture_native.depth = txd_exporter.get_depth_from_raster(texture_native.get_raster_format_type())
 
             # Platform properties
             texture_native.platform_properties = type('PlatformProperties', (), {
-                'alpha': True,
+                'alpha': has_alpha,
                 'cube_texture': False,
                 'auto_mipmaps': False,
                 'compressed': False
@@ -127,7 +156,7 @@ class txd_exporter:
         texture_native.palette = b''
 
         # Generate mipmaps
-        if txd_exporter.has_mipmaps:
+        if image_mipmap:
             mip_levels = txd_exporter.generate_mipmaps(rgba_data, width, height)
             texture_native.raster_format_flags |= (1 << 15)  # has_mipmaps
         else:
@@ -136,20 +165,20 @@ class txd_exporter:
         texture_native.num_levels = len(mip_levels)
 
         # Encode pixels based on compression type
-        if use_dxt:
+        if image_compression is not None:
             # DXT compression path
             compressor = squish.get_compressor()
             texture_native.pixels = []
 
             # Determine if we need to premultiply alpha (DXT2/DXT4)
-            premultiply = txd_exporter.dxt_format in ('DXT2', 'DXT4')
+            premultiply = image_compression in ('DXT2', 'DXT4')
 
             for mip_width, mip_height, level_data in mip_levels:
                 compressed = compressor.compress(
                     level_data,
                     mip_width,
                     mip_height,
-                    compression_type=txd_exporter.dxt_format,
+                    image_compression,
                     quality=txd_exporter.dxt_quality,
                     metric=txd_exporter.dxt_metric,
                     premultiply_alpha=premultiply
