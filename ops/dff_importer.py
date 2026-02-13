@@ -30,6 +30,7 @@ from .importer_common import (
 from .col_importer import import_col_mem
 from ..ops.ext_2dfx_importer import ext_2dfx_importer
 from ..ops.state import State
+from ..gtaLib.dff import strlen
 
 #######################################################
 class dff_importer:
@@ -518,10 +519,12 @@ class dff_importer:
                             mat.dff.bump_map_tex = bump_fx.bump_map.name
                             mat.dff.bump_dif_alpha = True
                             mat.dff.bump_map_intensity = bump_fx.intensity
+                            bump_img = self.find_texture_image(bump_fx.bump_map.name) 
 
                     elif bump_fx.bump_map is not None:
                         mat.dff.bump_map_tex = bump_fx.bump_map.name
                         mat.dff.bump_map_intensity = bump_fx.intensity
+                        bump_img = self.find_texture_image(bump_fx.bump_map.name) 
 
             # Surface Properties
             if material.surface_properties is not None:
@@ -537,16 +540,19 @@ class dff_importer:
             if 'env_map' in material.plugins:
                 plugin = material.plugins['env_map'][0]
                 helper.set_environment_map(plugin)
+                env_img = self.find_texture_image(plugin.env_map.name) if plugin.env_map else None
 
             # Dual Texture
             if 'dual' in material.plugins:
                 plugin = material.plugins['dual'][0]
                 helper.set_dual_texture(plugin)
+                dual_img = self.find_texture_image(plugin.texture.name) if plugin.texture else None
 
             # Specular Material
             if 'spec' in material.plugins:
                 plugin = material.plugins['spec'][0]
                 helper.set_specular_material(plugin)
+                spec_img = self.find_texture_image(plugin.texture[:strlen(plugin.texture)].decode('ascii')) if plugin.texture else None
 
             # Reflection Material
             if 'refl' in material.plugins:

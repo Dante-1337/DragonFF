@@ -53,7 +53,8 @@ class txd_exporter:
     dxt_quality = 'Good'        # 'Best', 'Good', 'Poor'
     dxt_metric  = 'Perceptual'  # 'Uniform', 'Perceptual
 
-    mass_export = False
+    selected_only = False
+    separate_files = False
     only_used_textures = True
     version = None
     file_name = ""
@@ -350,6 +351,57 @@ class txd_exporter:
                         used_textures.add((texture_name, node.image))
 
         return used_textures
+    
+    #######################################################
+    @staticmethod
+    def get_material_effects_textures(objects_to_scan=None):
+        effects_textures = set()
+
+        objects = objects_to_scan if objects_to_scan is not None else bpy.context.scene.objects
+        
+        for obj in objects:
+            for mat_slot in obj.material_slots:
+                mat = mat_slot.material
+                if not mat or not hasattr(mat, 'dff'):
+                    continue
+
+                texture_names = [
+                    mat.dff.env_map_tex,
+                    mat.dff.bump_map_tex,
+                    mat.dff.dual_tex,
+                    mat.dff.specular_texture
+                ]
+                
+                for tex_name in texture_names:
+                    if not tex_name or not tex_name.strip():
+                        continue
+
+                    image = bpy.data.images.get(tex_name)
+                    
+                    if not image:
+                        for img in bpy.data.images:
+
+                            if '/' in img.name:
+                                parts = img.name.split('/')
+                                if len(parts) >= 2:
+                                    if parts[1] == tex_name:
+                                        image = img
+                                        break
+
+                            elif clear_extension(img.name) == tex_name:
+                                image = img
+                                break
+                    
+                    if image:
+                        texture_name, mipmap_level = txd_exporter.extract_texture_info_from_name(image.name)
+
+                        if mipmap_level > 0:
+                            continue
+                        
+                        texture_name = clear_extension(texture_name)
+                        effects_textures.add((texture_name, image))
+        
+        return effects_textures
 
     #######################################################
     @staticmethod
@@ -357,17 +409,37 @@ class txd_exporter:
         self = txd_exporter
 
         self.txd.native_textures = []
+        all_textures = {}  # Use dict to avoid duplicates: {image: texture_name}
 
         # Determine which textures to export based on context
         if objects_to_scan is not None:
-            # Mass export mode: only export textures used by specific objects
+            # Specific objects mode: only export textures used by these objects
             used_textures = self.get_used_textures(objects_to_scan)
+            effects_textures = self.get_material_effects_textures(objects_to_scan)
+            
+            # Combine both sets
+            for texture_name, image in used_textures:
+                all_textures[image] = texture_name
+            for texture_name, image in effects_textures:
+                # Only add if not already present (prioritize used_textures naming)
+                if image not in all_textures:
+                    all_textures[image] = texture_name
+                    
         elif self.only_used_textures:
             # Single export with "only used textures" option
             used_textures = self.get_used_textures()
+            effects_textures = self.get_material_effects_textures()
+            
+            # Combine both sets
+            for texture_name, image in used_textures:
+                all_textures[image] = texture_name
+            for texture_name, image in effects_textures:
+                # Only add if not already present (prioritize used_textures naming)
+                if image not in all_textures:
+                    all_textures[image] = texture_name
+                    
         else:
             # Single export, all textures
-            used_textures = set()
             for image in bpy.data.images:
                 # Skip invalid/system textures
                 if (image.name.startswith("//") or
@@ -376,7 +448,7 @@ class txd_exporter:
                     image.size[0] == 0 or image.size[1] == 0):
                     continue
 
-                # Extract texture name from node.label (in case it follows TXD naming pattern)
+                # Extract texture name (in case it follows TXD naming pattern)
                 texture_name, mipmap_level = self.extract_texture_info_from_name(image.name)
 
                 # Skip mipmaps
@@ -384,9 +456,10 @@ class txd_exporter:
                     continue
 
                 texture_name = clear_extension(texture_name)
-                used_textures.add((texture_name, image))
+                all_textures[image] = texture_name
 
-        for texture_name, image in used_textures:
+        # Export all collected textures
+        for image, texture_name in all_textures.items():
             # Skip images without pixel data
             if not hasattr(image, 'pixels') or len(image.pixels) == 0:
                 continue
@@ -414,41 +487,57 @@ class txd_exporter:
 
         self.file_name = file_name
 
-        if self.mass_export:
-            # Export TXD files per selected object
-            selected_objects = bpy.context.selected_objects
+        # Determine which objects to scan
+        if self.selected_only:
+            objects_to_process = [obj for obj in bpy.context.selected_objects 
+                                if obj.material_slots]
+            if not objects_to_process:
+                print("No selected objects with materials, falling back to all objects")
+                objects_to_process = None
+        else:
+            objects_to_process = None
 
-            if not selected_objects:
-                print("No objects selected for mass export, exporting all textures to single file")
-                self.export_textures()
+        if self.separate_files:
+            # Export one TXD per object
+            if objects_to_process is None:
+                # Get all objects with materials
+                objects_to_process = [obj for obj in bpy.context.scene.objects 
+                                    if obj.material_slots]
+            
+            if not objects_to_process:
+                print("No objects with materials found")
                 return
 
-            selected_objects_num = 0
-
-            for obj in bpy.context.selected_objects:
-                # Only export for objects that have materials
-                if not obj.material_slots:
-                    continue
-
+            exported_count = 0
+            for obj in objects_to_process:
                 # Create filename based on object name
                 safe_name = "".join(c for c in obj.name if c.isalnum() or c in "_-.")
+                if not safe_name:
+                    safe_name = "object"
+                
                 file_name = os.path.join(self.path, f"{safe_name}.txd")
                 print(f"Exporting textures for object '{obj.name}' to {file_name}")
 
                 # Export textures used by this specific object only
                 self.export_textures([obj], file_name)
-                selected_objects_num += 1
+                exported_count += 1
 
-            print(f"Mass export completed for {selected_objects_num} objects")
+            print(f"Separate files export completed for {exported_count} objects")
 
         else:
-            self.export_textures()
+            # Export single TXD file
+            if objects_to_process:
+                # Export only textures from selected objects
+                self.export_textures(objects_to_process, self.file_name)
+            else:
+                # Export all textures
+                self.export_textures(None, self.file_name)
 
 #######################################################
 def export_txd(options):
 
-
-    txd_exporter.mass_export        = options.get('mass_export', False)
+    txd_exporter.selected_only      = options.get('selected_only', False)
+    txd_exporter.separate_files     = options.get('separate_files', False)
     txd_exporter.only_used_textures = options.get('only_used_textures', True)
     txd_exporter.version            = options.get('version', 0x36003)
 

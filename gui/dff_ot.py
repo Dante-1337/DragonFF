@@ -695,14 +695,21 @@ class EXPORT_OT_txd(bpy.types.Operator, ExportHelper):
                                               default="",
                                               subtype='DIR_PATH')
 
-    mass_export         : bpy.props.BoolProperty(
-        name            = "Mass Export",
+    selected_only       : bpy.props.BoolProperty(
+        name            = "Selected Only",
+        description     = "Export textures only from selected objects",
+        default         = False
+    )
+
+    separate_files      : bpy.props.BoolProperty(
+        name            = "Separate Files",
+        description     = "Export a separate TXD file for each object",
         default         = False
     )
 
     only_used_textures  : bpy.props.BoolProperty(
         name            = "Only Used Textures",
-        description     = "Export only textures that are used in the scene materials",
+        description     = "Export only textures that are currently used",
         default         = True
     )
 
@@ -736,11 +743,15 @@ class EXPORT_OT_txd(bpy.types.Operator, ExportHelper):
         main_box.label(text="Export Settings")
 
         row = main_box.row()
-        row.label(text="Mass Export")
-        row.prop(self, "mass_export", text="")
+        row.label(text="Selected Only")
+        row.prop(self, "selected_only", text="")
 
         row = main_box.row()
-        row.label(text="Only Used Textures")
+        row.label(text="Separate Files")
+        row.prop(self, "separate_files", text="")
+
+        row = main_box.row()
+        row.label(text="Used Textures")
         row.prop(self, "only_used_textures", text="")
 
         # Compression settings
@@ -766,7 +777,8 @@ class EXPORT_OT_txd(bpy.types.Operator, ExportHelper):
                 {
                     "file_name"          : self.filepath,
                     "directory"          : self.directory,
-                    "mass_export"        : self.mass_export,
+                    "selected_only"      : self.selected_only,
+                    "separate_files"     : self.separate_files,
                     "only_used_textures" : self.only_used_textures,
                     "dxt_quality"        : self.dxt_quality,
                     "dxt_metric"         : self.dxt_metric,

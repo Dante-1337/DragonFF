@@ -837,7 +837,20 @@ class TEXTURES_UL_txd_image_list(bpy.types.UIList):
                 if tex:
                     used_names.add(tex)
 
+        used_images = set()
+        for slot in obj.material_slots:
+            if not slot.material or not slot.material.node_tree:
+                continue
+            m = slot.material
+            for node in m.node_tree.nodes:
+                if node.type == 'TEX_IMAGE' and node.image:
+                    used_images.add(node.image.name)
+
         for i, img in enumerate(images):
+            if not hasattr(img, 'pixels') or len(img.pixels) == 0 or img.size[0] == 0 or img.size[1] == 0:  
+                flt_flags[i] = 0
+                continue  
+
             name = img.name
             if '/' in name:
                 parts = name.split('/')
@@ -848,7 +861,7 @@ class TEXTURES_UL_txd_image_list(bpy.types.UIList):
             else:
                 tex_name = name.rsplit('.', 1)[0] if '.' in name else name
 
-            if name in used_names or tex_name in used_names:
+            if name in used_names or tex_name in used_names or name in used_images:
                 flt_flags[i] = self.bitflag_filter_item
 
         return flt_flags, flt_order
@@ -881,19 +894,6 @@ class MATERIAL_PT_txdTextures(bpy.types.Panel):
             rows=3
         )
 
-        used_names = set()
-        for slot in obj.material_slots:
-            if not slot.material:
-                continue
-            m = slot.material
-            if not m.dff:
-                continue
-            d = m.dff
-            for tex in (d.tex_name, d.env_map_tex, d.bump_map_tex,
-                        d.dual_tex, d.specular_texture):
-                if tex:
-                    used_names.add(tex)
-
         active_idx = context.scene.dff_txd_texture_list.active_index
 
         if active_idx < 0 or active_idx >= len(bpy.data.images):
@@ -904,7 +904,9 @@ class MATERIAL_PT_txdTextures(bpy.types.Panel):
         if not hasattr(img, "dff"):
             return
 
-        # Check if this image is used by the current object
+        # Check if this image is being used 
+        is_used = False
+
         name = img.name
         if '/' in name:
             parts = name.split('/')
@@ -914,8 +916,33 @@ class MATERIAL_PT_txdTextures(bpy.types.Panel):
                 tex_name = name
         else:
             tex_name = name.rsplit('.', 1)[0] if '.' in name else name
+        
+        for slot in obj.material_slots:
+            if not slot.material:
+                continue
+                
+            # Check for material effects textures
+            if hasattr(slot.material, 'dff'):
+                d = slot.material.dff
+                for tex in (d.tex_name, d.env_map_tex, d.bump_map_tex,
+                            d.dual_tex, d.specular_texture):
+                    if tex and (tex == name or tex == tex_name):
+                        is_used = True
+                        break
+            
+            if is_used:
+                break
 
-        if name not in used_names and tex_name not in used_names:
+            if slot.material.node_tree:
+                for node in slot.material.node_tree.nodes:
+                    if node.type == 'TEX_IMAGE' and node.image == img:
+                        is_used = True
+                        break
+            
+            if is_used:
+                break
+        
+        if not is_used:
             return
 
         settings = img.dff
