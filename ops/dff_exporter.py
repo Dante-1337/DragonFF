@@ -1247,7 +1247,8 @@ class dff_exporter:
                 'version'               : 3,
                 'collection'            : self.collection,
                 'apply_transformations' : self.apply_coll_trans,
-                'only_selected'         : self.selected
+                'only_selected'         : self.selected,
+                'clean_mesh'            : False
             })
 
             if len(mem) != 0:
